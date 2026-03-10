@@ -1,0 +1,135 @@
+---
+- name: Deploy nginx on EC2
+  hosts: all
+  become: yes
+
+  vars:
+    app_name: web-app
+    web_root: /var/www/html
+    nginx_conf: /etc/nginx/sites-available/default
+
+  handlers:
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+        enabled: yes
+
+    - name: reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+  tasks:
+    - name: Update apt cache and install nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Ensure nginx is started and enabled
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Ensure web root directory exists
+      file:
+        path: "{{ web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Deploy index.html
+      copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="UTF-8">
+              <title>{{ app_name }}</title>
+              <style>
+                body {
+                  font-family: Arial, sans-serif;
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                  height: 100vh;
+                  margin: 0;
+                  background-color: #f0f4f8;
+                }
+                .container {
+                  text-align: center;
+                  padding: 2rem;
+                  background: white;
+                  border-radius: 8px;
+                  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                }
+                h1 { color: #2d3748; }
+                p  { color: #718096; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <h1>{{ app_name }}</h1>
+                <p>Deployed with Ansible on EC2 — us-east-1</p>
+              </div>
+            </body>
+          </html>
+        dest: "{{ web_root }}/index.html"
+        owner: www-data
+        group: www-data
+        mode: "0644"
+      notify: reload nginx
+
+    - name: Configure nginx default site
+      copy:
+        content: |
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+
+              root {{ web_root }};
+              index index.html index.htm;
+
+              server_name _;
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+
+              access_log /var/log/nginx/{{ app_name }}_access.log;
+              error_log  /var/log/nginx/{{ app_name }}_error.log;
+          }
+        dest: "{{ nginx_conf }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart nginx
+
+    - name: Ensure sites-enabled symlink exists
+      file:
+        src: "{{ nginx_conf }}"
+        dest: /etc/nginx/sites-enabled/default
+        state: link
+        owner: root
+        group: root
+      notify: restart nginx
+
+    - name: Remove default nginx symlink if pointing elsewhere
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      when: false
+
+    - name: Test nginx configuration
+      command: nginx -t
+      changed_when: false
+
+    - name: Ensure nginx is running after configuration
+      service:
+        name: nginx
+        state: started
+        enabled: yes
