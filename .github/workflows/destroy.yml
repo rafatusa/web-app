@@ -1,0 +1,52 @@
+name: Destroy Infrastructure - web-app
+
+on:
+  workflow_dispatch:
+
+jobs:
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -backend-config="key=web-app/terraform.tfstate"
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: terraform destroy -auto-approve
+
+      - name: Delete Key Pair
+        run: |
+          aws ec2 delete-key-pair \
+            --key-name "${{ secrets.PROJECT_NAME }}-key" \
+            --region "${{ secrets.AWS_REGION }}" || true
+
+      - name: Delete Security Group
+        run: |
+          SECURITY_GROUP_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=${{ secrets.PROJECT_NAME }}-sg" \
+            --query "SecurityGroups[0].GroupId" \
+            --output text \
+            --region "${{ secrets.AWS_REGION }}" 2>/dev/null)
+          if [ "$SECURITY_GROUP_ID" != "None" ] && [ -n "$SECURITY_GROUP_ID" ]; then
+            aws ec2 delete-security-group \
+              --group-id "$SECURITY_GROUP_ID" \
+              --region "${{ secrets.AWS_REGION }}" || true
+          fi
